@@ -20,7 +20,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 发布构建开启 R8 压缩混淆 + 资源裁剪，体积更小、启动与运行更快
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // 使用 debug 签名，便于与已安装的调试包同签名覆盖更新（数据不丢）
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

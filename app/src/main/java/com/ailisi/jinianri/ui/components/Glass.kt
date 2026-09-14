@@ -1,7 +1,6 @@
 package com.ailisi.jinianri.ui.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -11,8 +10,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -44,65 +45,43 @@ fun GlassBackdrop(
 ) {
     val backdrop = rememberLayerBackdrop()
 
+    // 三个环境光斑 brush 提前创建，避免每帧重建
+    val violetAura = remember {
+        Brush.radialGradient(
+            colors = listOf(Color(0x266750A4), Color(0x006750A4)),
+            center = Offset(1000f, 320f),
+            radius = 900f,
+        )
+    }
+    val warmAura = remember {
+        Brush.radialGradient(
+            colors = listOf(Color(0x1FE87A5D), Color(0x00E87A5D)),
+            center = Offset(120f, 1250f),
+            radius = 950f,
+        )
+    }
+    val blueAura = remember {
+        Brush.radialGradient(
+            colors = listOf(Color(0x1A3E8BD8), Color(0x003E8BD8)),
+            center = Offset(950f, 1550f),
+            radius = 850f,
+        )
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
-        // 底层：温润光影画布（带有极淡雅柔和光斑，供透镜物理折射）
+        // 底层：温润光影画布。合并为单个 drawBehind 节点绘制（底色 + 三色光斑），
+        // 少一层布局/合成开销，视觉效果完全一致
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .layerBackdrop(backdrop)
-        ) {
-            // 素雅清澈底色
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFFF6F7F9))
-            )
-            // 极淡雅的紫蓝灵动环境光斑（右上）
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                Color(0x266750A4),
-                                Color(0x006750A4)
-                            ),
-                            center = Offset(1000f, 320f),
-                            radius = 900f
-                        )
-                    )
-            )
-            // 温润暖橙环境光斑（左中）
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                Color(0x1FE87A5D),
-                                Color(0x00E87A5D)
-                            ),
-                            center = Offset(120f, 1250f),
-                            radius = 950f
-                        )
-                    )
-            )
-            // 清透青蓝环境光斑（右中下），保证下半屏的卡片也有可折射的光学介质
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                Color(0x1A3E8BD8),
-                                Color(0x003E8BD8)
-                            ),
-                            center = Offset(950f, 1550f),
-                            radius = 850f
-                        )
-                    )
-            )
-        }
+                .drawBehind {
+                    drawRect(Color(0xFFF6F7F9))
+                    drawRect(violetAura)
+                    drawRect(warmAura)
+                    drawRect(blueAura)
+                }
+        )
 
         // 上层内容：通过 CompositionLocal 注入 backdrop
         CompositionLocalProvider(LocalBackdrop provides backdrop) {
