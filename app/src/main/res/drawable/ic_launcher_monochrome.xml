@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 单色层：心形剪影（Android 13+ 主题图标） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,74 C54,74 34,60 34,47.5 C34,40.6 39.6,35 46.5,35 C50.2,35 53.4,36.6 54,38.8 C54.6,36.6 57.8,35 61.5,35 C68.4,35 74,40.6 74,47.5 C74,60 54,74 54,74 Z" />
+</vector>
