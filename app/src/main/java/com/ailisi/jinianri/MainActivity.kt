@@ -32,10 +32,12 @@ import com.ailisi.jinianri.ui.liquid.LiquidBottomBar
 import com.ailisi.jinianri.ui.screens.CategoriesScreen
 import com.ailisi.jinianri.ui.screens.DetailScreen
 import com.ailisi.jinianri.ui.screens.EditorScreen
+import com.ailisi.jinianri.ui.screens.HolidayImportScreen
 import com.ailisi.jinianri.ui.screens.HomeScreen
 import com.ailisi.jinianri.ui.screens.LunarScreen
 import com.ailisi.jinianri.ui.screens.MeScreen
 import com.ailisi.jinianri.ui.theme.JinianriTheme
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.serialization.Serializable
@@ -72,6 +74,9 @@ object MeRoute
 object CategoriesRoute
 
 @Serializable
+object HolidayImportRoute
+
+@Serializable
 data class EditorRoute(val eventId: Long = -1L, val presetCategoryId: Long = -1L)
 
 @Serializable
@@ -103,6 +108,12 @@ private fun JinianriNav(viewModel: MainViewModel, initialEventId: Long) {
         if (initialEventId > 0) {
             navController.navigate(DetailRoute(initialEventId))
         }
+    }
+
+    // 回到前台时刷新「今天」：跨过午夜后首页倒计时不会停在昨天
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshToday()
+        onPauseOrDispose { }
     }
 
     // 液态玻璃底栏在导航宿主层常驻（不随页面切换销毁），
@@ -137,23 +148,30 @@ private fun JinianriNav(viewModel: MainViewModel, initialEventId: Long) {
                         viewModel = viewModel,
                         onAddEvent = { navController.navigate(EditorRoute()) { launchSingleTop = true } },
                         onOpenEvent = { id -> navController.navigate(DetailRoute(id)) { launchSingleTop = true } },
-                        onOpenCategories = { navController.navigate(CategoriesRoute) },
                     )
                 }
                 composable<LunarRoute> {
                     LunarScreen(
                         viewModel = viewModel,
                         onOpenEvent = { id -> navController.navigate(DetailRoute(id)) { launchSingleTop = true } },
+                        onOpenHolidayImport = { navController.navigate(HolidayImportRoute) },
                     )
                 }
                 composable<MeRoute> {
                     MeScreen(
                         viewModel = viewModel,
                         onOpenCategories = { navController.navigate(CategoriesRoute) },
+                        onOpenHolidayImport = { navController.navigate(HolidayImportRoute) },
                     )
                 }
                 composable<CategoriesRoute> {
                     CategoriesScreen(
+                        viewModel = viewModel,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable<HolidayImportRoute> {
+                    HolidayImportScreen(
                         viewModel = viewModel,
                         onBack = { navController.popBackStack() },
                     )

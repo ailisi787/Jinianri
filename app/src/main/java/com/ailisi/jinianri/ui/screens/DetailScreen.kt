@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ailisi.jinianri.data.EventEntity
 import com.ailisi.jinianri.domain.DateEngine
+import com.ailisi.jinianri.domain.FestivalRules
 import com.ailisi.jinianri.ui.MainViewModel
 import com.ailisi.jinianri.ui.components.CardSurface
 import com.ailisi.jinianri.ui.components.GlassBackdrop
@@ -79,8 +80,9 @@ fun DetailScreen(
     var showDelete by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    // 直接按 id 观察事件
-    val event by viewModel.observeEvent(eventId).collectAsState(initial = null)
+    // 直接按 id 观察事件（Flow 要 remember，否则每次重组都会重建并重启收集）
+    val eventFlow = remember(eventId) { viewModel.observeEvent(eventId) }
+    val event by eventFlow.collectAsState(initial = null)
     val e = event ?: return
 
     val timing = DateEngine.timingOf(
@@ -89,6 +91,7 @@ fun DetailScreen(
         isLunar = e.isLunar,
         lunarMonth = e.lunarMonth,
         lunarDay = e.lunarDay,
+        rule = e.rule,
     )
     val category = categories.firstOrNull { it.id == e.categoryId }
     val color = colorOf(category?.color ?: 0xFF6750A4)
@@ -345,7 +348,14 @@ fun DetailScreen(
                             icon = Icons.Filled.Repeat,
                             iconColor = MaterialTheme.colorScheme.primary,
                             label = "重复规则",
-                            value = if (e.repeatYearly) "每年按${if (e.isLunar) "农历" else "公历"}循环" else "一次性事件",
+                            value = if (e.repeatYearly) {
+                                when {
+                                    e.rule.isNotEmpty() ->
+                                        "每年按${FestivalRules.describe(e.rule)}重算"
+                                    e.isLunar -> "每年按农历循环"
+                                    else -> "每年按公历循环"
+                                }
+                            } else "一次性事件",
                         )
                         InfoDetailRow(
                             icon = Icons.Filled.Notifications,

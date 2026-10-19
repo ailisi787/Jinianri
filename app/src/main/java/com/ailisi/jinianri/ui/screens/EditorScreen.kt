@@ -119,6 +119,7 @@ fun EditorScreen(
     var showCategoryDialog by remember { mutableStateOf(false) }
     var showIconPicker by remember { mutableStateOf(false) }
     var titleError by remember { mutableStateOf(false) }
+    var lunarDateError by remember { mutableStateOf(false) }
 
     // 加载已有事件
     LaunchedEffect(eventId) {
@@ -358,6 +359,17 @@ fun EditorScreen(
                                 }
                             }
 
+                            // 农历日期在该年不存在时（农历月异常）明确报错，不静默改写
+                            if (lunarDateError) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    "这个农历日期在这一年不存在，请重新选择",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
+                            }
+
                             Spacer(Modifier.height(14.dp))
 
                             // 每年重复开关
@@ -589,8 +601,16 @@ fun EditorScreen(
                                 return@Button
                             }
                             val resolvedSolar = if (isLunar) {
-                                DateEngine.lunarDateInYear(lunarYear, lunarMonth, lunarDay) ?: LocalDate.now()
-                            } else solarDate
+                                DateEngine.lunarDateInYear(lunarYear, lunarMonth, lunarDay)
+                            } else {
+                                solarDate
+                            }
+                            if (resolvedSolar == null) {
+                                // 农历日期在这一年不存在：宁可让用户改，也不要悄悄存成今天
+                                lunarDateError = true
+                                return@Button
+                            }
+                            lunarDateError = false
 
                             val entity = (editing ?: EventEntity(
                                 title = title,
@@ -656,6 +676,7 @@ fun EditorScreen(
                 lunarYear = y
                 lunarMonth = m
                 lunarDay = d
+                lunarDateError = false
                 showLunarPicker = false
             },
             onDismiss = { showLunarPicker = false },

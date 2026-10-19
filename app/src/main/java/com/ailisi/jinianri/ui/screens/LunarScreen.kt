@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +55,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ailisi.jinianri.domain.DateEngine
+import com.ailisi.jinianri.domain.FestivalRules
+import com.ailisi.jinianri.domain.HolidayCalendar
 import com.ailisi.jinianri.ui.EventCard
 import com.ailisi.jinianri.ui.MainViewModel
 import com.ailisi.jinianri.ui.components.CardSurface
@@ -64,13 +67,18 @@ import com.ailisi.jinianri.ui.components.iconOf
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
+import java.time.temporal.ChronoUnit
+
+/** 放假标记色（中国红） */
+private val OffDayColor = Color(0xFFE53935)
 
 @Composable
 fun LunarScreen(
     viewModel: MainViewModel,
     onOpenEvent: (Long) -> Unit,
+    onOpenHolidayImport: () -> Unit,
 ) {
-    val today = remember { LocalDate.now() }
+    val today by viewModel.today.collectAsState()
     var shownMonth by remember { mutableStateOf(YearMonth.from(today)) }
     // 选中的日期（同一天再点取消）；切换月份时重置
     var selectedDay by remember(shownMonth) { mutableStateOf<Int?>(null) }
@@ -93,12 +101,25 @@ fun LunarScreen(
                         lunarMonth = e.lunarMonth,
                         lunarDay = e.lunarDay,
                         date = date,
+                        rule = e.rule,
                     )
                 }
                 if (list.isNotEmpty()) put(day, list)
             }
         }
     }
+
+    // 当月每天的放假归属（dayOfMonth -> 假期名），以及接下来几段假期
+    val breaksOfYear = remember(shownMonth.year) { HolidayCalendar.breaksInYear(shownMonth.year) }
+    val offDays: Map<Int, String> = remember(shownMonth, breaksOfYear) {
+        buildMap {
+            for (day in 1..shownMonth.lengthOfMonth()) {
+                val date = shownMonth.atDay(day)
+                breaksOfYear.firstOrNull { it.contains(date) }?.let { put(day, it.name) }
+            }
+        }
+    }
+    val upcomingBreaks = remember(today) { HolidayCalendar.upcoming(today, count = 3) }
 
     // 当月全部纪念日（按天排序）
     val monthEvents: List<Pair<Int, EventCard>> = eventsByDay
@@ -330,6 +351,7 @@ fun LunarScreen(
                                 today = today,
                                 eventsByDay = eventsByDay,
                                 categories = categories,
+                                offDays = offDays,
                                 selectedDay = selectedDay,
                                 onSelectDay = { day ->
                                     // 再点一次同一天取消选中
@@ -340,7 +362,56 @@ fun LunarScreen(
                     }
                 }
 
-                // 3. 选中日期：距离今天的天数卡片
+                // 3. 即将到来的假期：连休天数一眼看清
+                item {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, top = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "即将到来的假期",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = onOpenHolidayImport) {
+                                Text("导入节日", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        CardSurface(
+                            shape = RoundedCornerShape(20.dp),
+                            containerColor = Color.White,
+                            borderColor = Color(0xFFEBECEF),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column {
+                                upcomingBreaks.forEachIndexed { index, holiday ->
+                                    if (index > 0) {
+                                        HorizontalDivider(
+                                            thickness = 0.5.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                        )
+                                    }
+                                    HolidayRow(holiday = holiday, today = today)
+                                }
+                                if (upcomingBreaks.isEmpty()) {
+                                    Text(
+                                        "暂时算不出假期安排",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(16.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. 选中日期：距离今天的天数卡片
                 if (selectedDay != null) {
                     item {
                         val selectedDate = shownMonth.atDay(selectedDay!!)
@@ -397,7 +468,7 @@ fun LunarScreen(
                     }
                 }
 
-                // 4. 当月/当天纪念日列表标题
+                // 5. 当月/当天纪念日列表标题
                 item {
                     Row(
                         modifier = Modifier
@@ -464,6 +535,80 @@ fun LunarScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HolidayRow(
+    holiday: HolidayCalendar.Break,
+    today: LocalDate,
+) {
+    val days = ChronoUnit.DAYS.between(today, holiday.start)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(OffDayColor.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "休",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = OffDayColor,
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    holiday.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = OffDayColor.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        "连休 ${holiday.days} 天",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = OffDayColor,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                buildString {
+                    append(holiday.rangeText)
+                    if (!holiday.official) append(" · 按规则推算")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            when {
+                days > 0 -> "还有 $days 天"
+                days == 0L -> "就是今天"
+                else -> "放假中"
+            },
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = OffDayColor,
+        )
     }
 }
 
@@ -536,7 +681,7 @@ private fun MonthEventRow(
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "${if (card.event.isLunar) "农历 " else "公历 "}$day 日 · ${card.event.isLunar.let { if (it) "按农历每年重复" else "按公历每年重复" }}",
+                    recurrenceText(card.event, day),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -559,6 +704,18 @@ private fun MonthEventRow(
             }
         }
     }
+}
+
+/** 列表副标题：日期口径 + 重复方式（一次性事件不再写成「每年重复」） */
+private fun recurrenceText(event: com.ailisi.jinianri.data.EventEntity, day: Int): String {
+    val dateText = if (event.isLunar) "农历 $day 日" else "公历 $day 日"
+    val repeatText = when {
+        !event.repeatYearly -> "仅此一次"
+        event.rule.isNotEmpty() -> "${FestivalRules.describe(event.rule)} · 每年重算"
+        event.isLunar -> "按农历每年重复"
+        else -> "按公历每年重复"
+    }
+    return "$dateText · $repeatText"
 }
 
 @Composable
@@ -592,6 +749,7 @@ private fun MonthGrid(
     today: LocalDate,
     eventsByDay: Map<Int, List<EventCard>>,
     categories: List<com.ailisi.jinianri.data.CategoryEntity>,
+    offDays: Map<Int, String>,
     selectedDay: Int?,
     onSelectDay: (Int) -> Unit,
 ) {
@@ -620,6 +778,8 @@ private fun MonthGrid(
                     val isToday = date == today
                     val isSelected = selectedDay == dayNumber
                     val hasEvents = dayEvents.isNotEmpty()
+                    // 这一天是否在放假区间内（连着几天都在，就是「连休」的直观呈现）
+                    val offName = if (inMonth) offDays[dayNumber] else null
                     val accentColor = remember(dayEvents) {
                         dayEvents.firstOrNull()?.let { card ->
                             categories.firstOrNull { it.id == card.event.categoryId }
@@ -634,10 +794,11 @@ private fun MonthGrid(
                             .padding(2.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(
-                                if (hasEvents && !isToday && !isSelected) {
-                                    accentColor.copy(alpha = 0.08f)
-                                } else {
-                                    Color.Transparent
+                                when {
+                                    isToday || isSelected -> Color.Transparent
+                                    offName != null -> OffDayColor.copy(alpha = 0.08f)
+                                    hasEvents -> accentColor.copy(alpha = 0.08f)
+                                    else -> Color.Transparent
                                 }
                             )
                             .clickable(
@@ -739,6 +900,25 @@ private fun MonthGrid(
                                             }
                                         }
                                     }
+                                }
+                            }
+                            // 放假标记：落在假期里的每个格子右上角一枚「休」
+                            if (offName != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(top = 2.dp, end = 2.dp)
+                                        .clip(RoundedCornerShape(5.dp))
+                                        .background(OffDayColor),
+                                ) {
+                                    Text(
+                                        "休",
+                                        fontSize = 8.sp,
+                                        lineHeight = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                    )
                                 }
                             }
                         }

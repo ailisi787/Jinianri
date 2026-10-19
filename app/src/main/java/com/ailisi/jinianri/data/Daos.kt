@@ -22,6 +22,10 @@ interface EventDao {
     @Insert
     suspend fun insert(event: EventEntity): Long
 
+    /** 批量插入（节日导入用），返回新事件的 id 列表 */
+    @Insert
+    suspend fun insertAll(events: List<EventEntity>): List<Long>
+
     @Update
     suspend fun update(event: EventEntity)
 

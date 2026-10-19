@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [EventEntity::class, CategoryEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class JinianriDatabase : RoomDatabase() {
@@ -37,6 +37,13 @@ abstract class JinianriDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 -> v4：事件新增节日规则字段（空 = 普通事件，见 FestivalRules） */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE events ADD COLUMN rule TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var instance: JinianriDatabase? = null
 
@@ -47,7 +54,7 @@ abstract class JinianriDatabase : RoomDatabase() {
 
         private fun build(context: Context): JinianriDatabase =
             Room.databaseBuilder(context, JinianriDatabase::class.java, "jinianri.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)

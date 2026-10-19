@@ -40,6 +40,7 @@ class ReminderWorker(
                 isLunar = event.isLunar,
                 lunarMonth = event.lunarMonth,
                 lunarDay = event.lunarDay,
+                rule = event.rule,
                 today = today,
             )
             if (timing.daysUntil == remind.toLong()) {

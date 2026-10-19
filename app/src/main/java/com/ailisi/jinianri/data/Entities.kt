@@ -34,6 +34,11 @@ data class EventEntity(
     val lunarMonth: Int = 0,
     /** 农历日（1-30） */
     val lunarDay: Int = 0,
+    /**
+     * 规则型节日的日期规则（空 = 普通事件），如 `term:清明`、`nth:5,SUN,2`。
+     * 存了规则的事件，下一次发生日由规则重算，不受 [dateEpochDay] 影响。
+     */
+    val rule: String = "",
     /** 每年重复 */
     val repeatYearly: Boolean = true,
     /** 计时方式：true = 正计时（已经 N 天），false = 倒计时（还有 N 天） */

@@ -14,6 +14,7 @@ import java.time.temporal.ChronoUnit
  * - 公历每年重复：取本年同月同日；若已过，取次年。2 月 29 日在平年按 2 月 28 日。
  * - 农历每年重复：取农历同月同日；闰月日期在无闰月的年份落到普通月；
  *   小月无 30 日时落到该月最后一天。
+ * - 规则型节日（节气、「第 n 个星期几」）：按 [FestivalRules] 每年重算。
  */
 object DateEngine {
 
@@ -35,6 +36,7 @@ object DateEngine {
      * @param isLunar 是否农历
      * @param lunarMonth 农历月（闰月为负）
      * @param lunarDay 农历日
+     * @param rule 规则型节日的日期规则（空 = 普通事件），见 [FestivalRules]
      */
     fun timingOf(
         dateEpochDay: Long,
@@ -42,14 +44,15 @@ object DateEngine {
         isLunar: Boolean = false,
         lunarMonth: Int = 0,
         lunarDay: Int = 0,
+        rule: String = "",
         today: LocalDate = LocalDate.now(),
     ): EventTiming {
         val start = LocalDate.ofEpochDay(dateEpochDay)
         val next = if (repeatYearly) {
-            if (isLunar) {
-                nextLunarOccurrence(lunarMonth, lunarDay, today)
-            } else {
-                nextSolarOccurrence(start.monthValue, start.dayOfMonth, today)
+            when {
+                rule.isNotEmpty() -> FestivalRules.nextOccurrence(rule, today) ?: start
+                isLunar -> nextLunarOccurrence(lunarMonth, lunarDay, today)
+                else -> nextSolarOccurrence(start.monthValue, start.dayOfMonth, today)
             }
         } else {
             start
@@ -74,6 +77,7 @@ object DateEngine {
      * - 每年重复（公历）：月日匹配；2 月 29 日在平年落到 2 月 28 日
      * - 每年重复（农历）：农历月日匹配；闰月不存在的年份落到普通月；
      *   小月无三十时落到该月最后一天
+     * - 规则型节日：按当年规则算出的日期匹配
      */
     fun occursOn(
         dateEpochDay: Long,
@@ -82,9 +86,11 @@ object DateEngine {
         lunarMonth: Int = 0,
         lunarDay: Int = 0,
         date: LocalDate,
+        rule: String = "",
     ): Boolean {
         val start = LocalDate.ofEpochDay(dateEpochDay)
         if (!repeatYearly) return start == date
+        if (rule.isNotEmpty()) return FestivalRules.occurrenceInYear(rule, date.year) == date
         if (!isLunar) {
             if (start.monthValue == date.monthValue && start.dayOfMonth == date.dayOfMonth) return true
             // 2 月 29 日在平年按 2 月 28 日

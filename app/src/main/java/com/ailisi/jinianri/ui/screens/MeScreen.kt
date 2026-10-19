@@ -1,6 +1,7 @@
 package com.ailisi.jinianri.ui.screens
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Celebration
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
@@ -61,6 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.ailisi.jinianri.domain.festivalCount
 import com.ailisi.jinianri.ui.MainViewModel
 import com.ailisi.jinianri.ui.components.CardSurface
 import com.ailisi.jinianri.ui.components.GlassBackdrop
@@ -72,6 +76,7 @@ import com.ailisi.jinianri.ui.theme.paletteOf
 fun MeScreen(
     viewModel: MainViewModel,
     onOpenCategories: () -> Unit,
+    onOpenHolidayImport: () -> Unit,
 ) {
     val context = LocalContext.current
     val themeKey by viewModel.themeKey.collectAsState()
@@ -79,16 +84,15 @@ fun MeScreen(
     val cards by viewModel.cards.collectAsState()
     val categories by viewModel.categories.collectAsState()
 
-    val hasNotificationPermission = remember {
-        if (Build.VERSION.SDK_INT >= 33) {
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        } else true
-    }
+    // 权限状态要在回到前台时重读：否则用户刚授权，「已开启/未开启」徽标还停在旧状态
+    var hasNotificationPermission by remember { mutableStateOf(checkNotificationPermission(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted -> hasNotificationPermission = granted }
+    LifecycleResumeEffect(Unit) {
+        hasNotificationPermission = checkNotificationPermission(context)
+        onPauseOrDispose { }
+    }
 
     val upcomingCount = remember(cards) {
         cards.count { it.daysUntil in 0..30 }
@@ -257,6 +261,19 @@ fun MeScreen(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                             )
                             SettingsRow(
+                                icon = Icons.Filled.Celebration,
+                                iconColor = Color(0xFFE53935),
+                                iconBg = Color(0xFFE53935).copy(alpha = 0.12f),
+                                title = "节日导入",
+                                subtitle = "内置 $festivalCount 个节日，勾选后一键导入为「节日」",
+                                onClick = onOpenHolidayImport,
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 62.dp),
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                            SettingsRow(
                                 icon = Icons.Filled.Notifications,
                                 iconColor = MaterialTheme.colorScheme.primary,
                                 iconBg = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
@@ -348,9 +365,15 @@ fun MeScreen(
     }
 }
 
+/** 通知权限是否已授予（API 33 以下默认已授予） */
+private fun checkNotificationPermission(context: Context): Boolean =
+    Build.VERSION.SDK_INT < 33 ||
+        ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+
 @Composable
-private fun StatItem(count: String, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun StatItem(count: String, label: String) {    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             count,
             style = MaterialTheme.typography.titleLarge,

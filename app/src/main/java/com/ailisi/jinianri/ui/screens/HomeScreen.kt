@@ -114,7 +114,6 @@ fun HomeScreen(
     viewModel: MainViewModel,
     onAddEvent: () -> Unit,
     onOpenEvent: (Long) -> Unit,
-    onOpenCategories: () -> Unit,
 ) {
     val cards by viewModel.filteredCards.collectAsState()
     val categories by viewModel.categories.collectAsState()
@@ -122,7 +121,8 @@ fun HomeScreen(
     val selected by viewModel.selectedCategoryId.collectAsState()
     val cardMode by viewModel.cardMode.collectAsState()
 
-    val today = remember { LocalDate.now() }
+    // 跟随应用回到前台刷新，跨过午夜后不会还显示昨天的日期
+    val today by viewModel.today.collectAsState()
     val weekDay = remember(today) {
         when (today.dayOfWeek) {
             DayOfWeek.MONDAY -> "周一"
@@ -148,6 +148,12 @@ fun HomeScreen(
     val listBackdrop = rememberLayerBackdrop()
     val gridCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
     val itemCoordinates = remember { mutableMapOf<Long, LayoutCoordinates>() }
+
+    // 事件被删除后清掉它的坐标缓存，避免长期攥着已失效的布局节点
+    LaunchedEffect(cards) {
+        val alive = cards.mapTo(mutableSetOf()) { it.event.id }
+        itemCoordinates.keys.retainAll(alive)
+    }
 
     GlassBackdrop { backdrop ->
         val dragBackdrop = rememberCombinedBackdrop(backdrop, listBackdrop)

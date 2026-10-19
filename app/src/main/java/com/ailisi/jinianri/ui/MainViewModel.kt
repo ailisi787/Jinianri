@@ -8,11 +8,11 @@ import com.ailisi.jinianri.JinianriApp
 import com.ailisi.jinianri.data.CategoryEntity
 import com.ailisi.jinianri.data.EventEntity
 import com.ailisi.jinianri.domain.DateEngine
+import com.ailisi.jinianri.domain.Festival
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -61,38 +61,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** 当前选中的分类筛选：null = 全部 */
     val selectedCategoryId = MutableStateFlow<Long?>(null)
 
+    /**
+     * 今天。应用回到前台时由 [refreshToday] 更新，
+     * 否则跨过午夜后首页倒计时会一直停在昨天。
+     */
+    private val _today = MutableStateFlow(LocalDate.now())
+    val today: StateFlow<LocalDate> = _today
+
+    fun refreshToday() {
+        val current = LocalDate.now()
+        if (current != _today.value) _today.value = current
+    }
+
     val categories: StateFlow<List<CategoryEntity>> =
         repo.observeCategories().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val cards: StateFlow<List<EventCard>> =
-        repo.observeEvents()
-            .map { events ->
-                val today = LocalDate.now()
-                events.map { event ->
-                    val timing = DateEngine.timingOf(
-                        dateEpochDay = event.dateEpochDay,
-                        repeatYearly = event.repeatYearly,
-                        isLunar = event.isLunar,
-                        lunarMonth = event.lunarMonth,
-                        lunarDay = event.lunarDay,
-                        today = today,
-                    )
-                    EventCard(
-                        event = event,
-                        nextDate = timing.nextDate,
-                        daysUntil = timing.daysUntil,
-                        daysSince = timing.daysSince,
-                        isToday = timing.daysUntil == 0L && event.repeatYearly,
-                    )
-                }.sortedWith(
-                    compareBy(
-                        { it.event.sortOrder ?: Int.MAX_VALUE },
-                        { it.daysUntil },
-                        { it.event.title },
-                    )
+        combine(repo.observeEvents(), _today) { events, today ->
+            events.map { event ->
+                val timing = DateEngine.timingOf(
+                    dateEpochDay = event.dateEpochDay,
+                    repeatYearly = event.repeatYearly,
+                    isLunar = event.isLunar,
+                    lunarMonth = event.lunarMonth,
+                    lunarDay = event.lunarDay,
+                    rule = event.rule,
+                    today = today,
                 )
-            }
-            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+                EventCard(
+                    event = event,
+                    nextDate = timing.nextDate,
+                    daysUntil = timing.daysUntil,
+                    daysSince = timing.daysSince,
+                    // 单次事件在今天也是「就是今天」，与详情页口径保持一致
+                    isToday = timing.daysUntil == 0L,
+                )
+            }.sortedWith(
+                compareBy(
+                    { it.event.sortOrder ?: Int.MAX_VALUE },
+                    { it.daysUntil },
+                    { it.event.title },
+                )
+            )
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** 筛选后的卡片：分类过滤 + 搜索 */
     val filteredCards: StateFlow<List<EventCard>> =
@@ -132,6 +143,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val id = repo.addEvent(event)
             onDone(id)
+        }
+    }
+
+    /**
+     * 导入节日：按今天算好每个节日的下一次发生日，批量写入并归入「节日」分类。
+     *
+     * @param onDone 返回实际导入条数
+     */
+    fun importFestivals(festivals: List<Festival>, onDone: (Int) -> Unit = {}) {
+        if (festivals.isEmpty()) {
+            onDone(0)
+            return
+        }
+        viewModelScope.launch {
+            val from = LocalDate.now()
+            val events = festivals.mapNotNull { festival ->
+                festival.nextDate(from)?.let { festival.toEvent(it) }
+            }
+            onDone(repo.importFestivals(events))
         }
     }
 
