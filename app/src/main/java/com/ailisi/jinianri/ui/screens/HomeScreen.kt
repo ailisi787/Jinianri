@@ -321,7 +321,9 @@ fun HomeScreen(
                                 val isDragging = dragController.draggingId == card.event.id
                                 val haptics = LocalHapticFeedback.current
                                 val itemModifier = Modifier
-                                    .then(if (isDragging) Modifier else Modifier.animateItem())
+                                    // 拖拽中也保留位移动画：被拖项 alpha=0 看不见，
+                                    // 其余卡片能平滑让位，布局信息也不会停在旧位置
+                                    .animateItem()
                                     .alpha(if (isDragging) 0f else 1f)
                                     .onGloballyPositioned { itemCoordinates[card.event.id] = it }
                                     .pointerInput(card.event.id) {
@@ -983,11 +985,23 @@ private class CardDragController(
     /** 当前生效的卡片顺序 */
     val workingIds: List<Long> get() = orderIds ?: baseIds
 
-    /** 数据库顺序变化时同步；与临时顺序一致（或卡片集合变化）时结束临时顺序 */
+    /**
+     * 数据库顺序变化时同步。
+     *
+     * 只在两种情况下结束临时顺序：
+     * 1. 拖拽已结束（[draggingId] == null）且数据库顺序与临时顺序一致 —— 本次拖拽已落库
+     * 2. 卡片集合发生变化（增删）—— 临时顺序已不适用
+     *
+     * 拖拽进行中绝不清空 orderIds：写库会让 cards 按新 sortOrder 重排，
+     * 此时 ids 与 orderIds 集合相同、顺序不同，若按顺序比较会误判并丢弃临时顺序，
+     * 导致悬浮卡片找不到落点、列表条目错位甚至视觉丢失。
+     */
     fun updateBase(ids: List<Long>) {
         baseIds = ids
-        val current = orderIds
-        if (current != null && (current == ids || current.toSet() != ids.toSet())) {
+        val current = orderIds ?: return
+        val setChanged = current.toSet() != ids.toSet()
+        val committed = draggingId == null && current == ids
+        if (setChanged || committed) {
             orderIds = null
         }
     }
@@ -1088,18 +1102,17 @@ private class CardDragController(
         autoScrollJob = null
         val ids = orderIds
         val changed = commit && ids != null && ids != baseIds
+        // 落点：被拖卡片在"新顺序"里应当占据的槽位，用相邻卡片位置推算。
+        // 不能直接读被拖卡片自己的布局位置——它此刻 alpha=0 且动画被禁用，位置是陈旧的。
+        val destination = if (commit) destinationIn(id, ids ?: baseIds) else null
         scope.launch {
             if (commit) {
-                // 等一帧，让最后一次排序完成布局，再取目标格位置做回弹吸附
-                withFrameNanos { }
-                val slot = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }
-                if (slot != null) {
-                    settleAnimation.snapTo(overlayOffset)
-                    settleAnimation.animateTo(
-                        Offset(slot.offset.x.toFloat(), slot.offset.y.toFloat()) + boundsDelta,
-                        spring(dampingRatio = 0.75f, stiffness = 420f),
-                    )
-                }
+                settleAnimation.snapTo(overlayOffset)
+                val target = destination ?: overlayOffset
+                settleAnimation.animateTo(
+                    target,
+                    spring(dampingRatio = 0.75f, stiffness = 420f),
+                )
             }
             if (changed) onDrop?.invoke(ids)
             // 落位后玻璃从"悬空折射态"平滑回到"静止态"，再撤掉悬浮层，避免颜色突然跳变
@@ -1108,6 +1121,36 @@ private class CardDragController(
             settling = false
             orderIds = if (changed) ids else null
         }
+    }
+
+    /**
+     * 被拖卡片应当落到的坐标。
+     *
+     * 用新顺序里紧邻的、当前可见且未在拖动的卡片来推算：
+     * 目标索引处若有卡片，取它的位置；否则取前一张的下方 / 后一张的上方。
+     * 都不可见时退回当前悬浮位置，避免飞出屏幕。
+     */
+    private fun destinationIn(draggedId: Long, ids: List<Long>): Offset? {
+        val target = ids.indexOf(draggedId)
+        if (target < 0) return null
+        val visible = gridState.layoutInfo.visibleItemsInfo
+            .filter { (it.key as? Long) != draggedId }
+            .associateBy { it.key }
+
+        // 优先：新顺序里排在它后面的第一张可见卡片（同列取同列位置，否则取顶部）
+        for (i in target + 1 until ids.size) {
+            val info = visible[ids[i]] ?: continue
+            return Offset(info.offset.x.toFloat(), info.offset.y.toFloat()) + boundsDelta
+        }
+        // 其次：排在它前面的最后一张可见卡片，落在它下方
+        for (i in target - 1 downTo 0) {
+            val info = visible[ids[i]] ?: continue
+            return Offset(
+                info.offset.x.toFloat(),
+                (info.offset.y + info.size.height).toFloat(),
+            ) + boundsDelta
+        }
+        return null
     }
 
     private fun LazyStaggeredGridItemInfo.bounds(): Rect = Rect(
