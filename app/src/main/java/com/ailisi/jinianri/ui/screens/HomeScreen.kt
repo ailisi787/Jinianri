@@ -116,6 +116,7 @@ fun HomeScreen(
     onOpenEvent: (Long) -> Unit,
 ) {
     val cards by viewModel.filteredCards.collectAsState()
+    val loaded by viewModel.loaded.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val query by viewModel.searchQuery.collectAsState()
     val selected by viewModel.selectedCategoryId.collectAsState()
@@ -284,7 +285,10 @@ fun HomeScreen(
                 Spacer(Modifier.height(8.dp))
 
                 // 内容区：空状态 / 支持长按拖动排序的流式布局（网格与列表共用一套拖拽逻辑）
-                if (cards.isEmpty()) {
+                // 首次读到数据之前不展示空状态，否则冷启动会闪一下「还没有纪念日」
+                if (cards.isEmpty() && !loaded) {
+                    Box(Modifier.fillMaxWidth().weight(1f)) {}
+                } else if (cards.isEmpty()) {
                     EmptyHint(
                         hasQuery = query.isNotEmpty() || selected != null,
                         onAdd = onAddEvent,

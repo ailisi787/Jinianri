@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -76,8 +77,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val categories: StateFlow<List<CategoryEntity>> =
         repo.observeCategories().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /**
+     * 事件表是否已经读到过至少一次真实结果。
+     *
+     * `stateIn` 的初始值是空列表，首帧分不清「正在读」和「确实没有事件」，
+     * 界面会闪一下「还没有纪念日」。等到第一次真实发射后再允许展示空状态。
+     */
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded
+
     val cards: StateFlow<List<EventCard>> =
-        combine(repo.observeEvents(), _today) { events, today ->
+        combine(
+            repo.observeEvents().onEach { _loaded.value = true },
+            _today,
+        ) { events, today ->
             events.map { event ->
                 val timing = DateEngine.timingOf(
                     dateEpochDay = event.dateEpochDay,

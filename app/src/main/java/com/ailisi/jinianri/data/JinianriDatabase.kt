@@ -56,6 +56,26 @@ abstract class JinianriDatabase : RoomDatabase() {
             Room.databaseBuilder(context, JinianriDatabase::class.java, "jinianri.db")
                 .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(object : RoomDatabase.Callback() {
+                    /**
+                     * 每次打开数据库前先把 WAL 合并回主库并清空 WAL。
+                     *
+                     * 覆盖安装 / 被系统强杀时，最后写入的数据可能还留在 `-wal` 里没落进主库。
+                     * 一旦 WAL 被判废（校验和或 salt 不匹配），SQLite 会直接忽略它，
+                     * 界面就会表现为「事件全部消失了」——数据其实还在 WAL 文件中。
+                     * 这里在 onOpen 里做 TRUNCATE checkpoint，早于任何查询，
+                     * 让主库始终自包含，下次异常结束也不会再出现这种假空。
+                     *
+                     * 其它连接正占用时 SQLite 会返回 busy，忽略即可（下次启动再合并）。
+                     */
+                    override fun onOpen(db: SupportSQLiteDatabase) {
+                        super.onOpen(db)
+                        try {
+                            db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+                        } catch (_: Exception) {
+                            // busy / 只读文件系统等情况：放弃本次合并，不影响正常使用
+                        }
+                    }
+
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
                         // 预置分类：未分类（系统）、生日、纪念日、考试
