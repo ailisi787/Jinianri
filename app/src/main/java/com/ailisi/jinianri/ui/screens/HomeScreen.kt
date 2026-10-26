@@ -325,9 +325,15 @@ fun HomeScreen(
                                 val isDragging = dragController.draggingId == card.event.id
                                 val haptics = LocalHapticFeedback.current
                                 val itemModifier = Modifier
-                                    // 拖拽中也保留位移动画：被拖项 alpha=0 看不见，
-                                    // 其余卡片能平滑让位，布局信息也不会停在旧位置
-                                    .animateItem()
+                                    // 拖拽期间关掉位移动画：animateItem 会让两张换位的卡片
+                                    // 互相飞向对方的位置，而 layoutInfo 在动画期间读到的仍是
+                                    // 旧坐标，于是同一个手指位置会来回判定成"在前/在后"，
+                                    // 不仅出现重叠，还会把邻居的相对顺序搅乱。
+                                    // 拖拽只靠悬浮层跟手，布局立即反映真实顺序即可。
+                                    .then(
+                                        if (dragController.isDragging) Modifier
+                                        else Modifier.animateItem()
+                                    )
                                     .alpha(if (isDragging) 0f else 1f)
                                     .onGloballyPositioned { itemCoordinates[card.event.id] = it }
                                     .pointerInput(card.event.id) {
@@ -1130,9 +1136,12 @@ private class CardDragController(
     /**
      * 被拖卡片应当落到的坐标。
      *
-     * 用新顺序里紧邻的、当前可见且未在拖动的卡片来推算：
-     * 目标索引处若有卡片，取它的位置；否则取前一张的下方 / 后一张的上方。
-     * 都不可见时退回当前悬浮位置，避免飞出屏幕。
+     * 首选它自己的槽位：拖拽期间已关掉 animateItem，被拖卡片虽然 alpha=0，
+     * 但布局立即反映新顺序，所以这个坐标精确就是目标槽位。
+     *
+     * 注意不能退化成"取后面那张卡的位置"——那正好低一格，悬浮层会多飞一格盖住邻居，
+     * 视觉上就是松手瞬间的重叠。
+     * 只有它自己不可见（被滚动出屏幕）时，才用相邻卡片推算。
      */
     private fun destinationIn(draggedId: Long, ids: List<Long>): Offset? {
         val target = ids.indexOf(draggedId)
@@ -1141,7 +1150,12 @@ private class CardDragController(
             .filter { (it.key as? Long) != draggedId }
             .associateBy { it.key }
 
-        // 优先：新顺序里排在它后面的第一张可见卡片（同列取同列位置，否则取顶部）
+        // 首选：被拖卡片自己的槽位（坐标即目标位置）
+        gridState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.key == draggedId }
+            ?.let { return Offset(it.offset.x.toFloat(), it.offset.y.toFloat()) + boundsDelta }
+
+        // 以下为兜底：新顺序里排在它后面的第一张可见卡片
         for (i in target + 1 until ids.size) {
             val info = visible[ids[i]] ?: continue
             return Offset(info.offset.x.toFloat(), info.offset.y.toFloat()) + boundsDelta
