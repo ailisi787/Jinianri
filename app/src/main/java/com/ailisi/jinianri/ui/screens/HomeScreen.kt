@@ -2,8 +2,9 @@ package com.ailisi.jinianri.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -973,8 +974,12 @@ private class CardDragController(
     var settling: Boolean by mutableStateOf(false)
         private set
 
-    private val settleAnimation = Animatable(Offset.Zero, Offset.VectorConverter)
-    val settleOffset: Offset get() = settleAnimation.value
+    /**
+     * 落位坐标：松手瞬间同步写入目标槽位，悬浮层当帧就贴到自己的槽位上。
+     * 用普通状态而不是 Animatable —— 后者只能挂起写入，会先闪一帧旧位置。
+     */
+    private var settleTarget: Offset by mutableStateOf(Offset.Zero)
+    val settleOffset: Offset get() = settleTarget
 
     private val liftAnimation = Animatable(0f)
 
@@ -1104,6 +1109,15 @@ private class CardDragController(
         }
     }
 
+    /**
+     * 松手落位。
+     *
+     * 关键：悬浮层**直接瞬移到目标槽位**，不做"从手指位置飞过去"的动画。
+     * 之前用回弹弹簧飞向槽位，弹簧路径会横穿中间那些卡片，且阻尼不足时还会
+     * 冲过目标再回来 —— 视觉上就是"松手后和别的卡片重合一下"。
+     * 瞬移之后悬浮层正好盖住自己的槽位，再原地卸掉玻璃提升量即可，
+     * 全程不经过任何邻居。
+     */
     private fun settle(commit: Boolean) {
         val id = draggingId ?: return
         if (settling) return
@@ -1112,21 +1126,14 @@ private class CardDragController(
         autoScrollJob = null
         val ids = orderIds
         val changed = commit && ids != null && ids != baseIds
-        // 落点：被拖卡片在"新顺序"里应当占据的槽位，用相邻卡片位置推算。
-        // 不能直接读被拖卡片自己的布局位置——它此刻 alpha=0 且动画被禁用，位置是陈旧的。
+        // 落点只取被拖卡片自己的槽位；取不到时留在原处，绝不借用邻居的位置（那就是重合）
         val destination = if (commit) destinationIn(id, ids ?: baseIds) else null
+        // 同步写入：本帧悬浮层就贴到自己的槽位，不再飞越中间的卡片
+        settleTarget = destination ?: overlayOffset
         scope.launch {
-            if (commit) {
-                settleAnimation.snapTo(overlayOffset)
-                val target = destination ?: overlayOffset
-                settleAnimation.animateTo(
-                    target,
-                    spring(dampingRatio = 0.75f, stiffness = 420f),
-                )
-            }
             if (changed) onDrop?.invoke(ids)
-            // 落位后玻璃从"悬空折射态"平滑回到"静止态"，再撤掉悬浮层，避免颜色突然跳变
-            liftAnimation.animateTo(0f, spring(dampingRatio = 1f, stiffness = 420f))
+            // 原地卸掉悬空态，槽位始终被悬浮层占着，不会出现空档
+            liftAnimation.animateTo(0f, tween(durationMillis = 110, easing = FastOutSlowInEasing))
             draggingId = null
             settling = false
             orderIds = if (changed) ids else null
@@ -1134,41 +1141,20 @@ private class CardDragController(
     }
 
     /**
-     * 被拖卡片应当落到的坐标。
+     * 被拖卡片应当落到的坐标 —— 只认它自己的槽位。
      *
-     * 首选它自己的槽位：拖拽期间已关掉 animateItem，被拖卡片虽然 alpha=0，
-     * 但布局立即反映新顺序，所以这个坐标精确就是目标槽位。
+     * 拖拽期间已关掉 animateItem，被拖卡片虽然 alpha=0，但布局立即反映新顺序，
+     * 所以 [LazyStaggeredGridItemInfo.offset] 精确就是目标槽位。
      *
-     * 注意不能退化成"取后面那张卡的位置"——那正好低一格，悬浮层会多飞一格盖住邻居，
-     * 视觉上就是松手瞬间的重叠。
-     * 只有它自己不可见（被滚动出屏幕）时，才用相邻卡片推算。
+     * 槽位不可见（被滚出屏幕）时返回 null，由调用方保持原位，**绝不退化成
+     * "借用邻居卡片的坐标"**：那样悬浮层会正正压在邻居身上，
+     * 就是用户看到的「松手后和别的卡片重合一下」。
      */
     private fun destinationIn(draggedId: Long, ids: List<Long>): Offset? {
-        val target = ids.indexOf(draggedId)
-        if (target < 0) return null
-        val visible = gridState.layoutInfo.visibleItemsInfo
-            .filter { (it.key as? Long) != draggedId }
-            .associateBy { it.key }
-
-        // 首选：被拖卡片自己的槽位（坐标即目标位置）
-        gridState.layoutInfo.visibleItemsInfo
+        if (draggedId !in ids) return null
+        return gridState.layoutInfo.visibleItemsInfo
             .firstOrNull { it.key == draggedId }
-            ?.let { return Offset(it.offset.x.toFloat(), it.offset.y.toFloat()) + boundsDelta }
-
-        // 以下为兜底：新顺序里排在它后面的第一张可见卡片
-        for (i in target + 1 until ids.size) {
-            val info = visible[ids[i]] ?: continue
-            return Offset(info.offset.x.toFloat(), info.offset.y.toFloat()) + boundsDelta
-        }
-        // 其次：排在它前面的最后一张可见卡片，落在它下方
-        for (i in target - 1 downTo 0) {
-            val info = visible[ids[i]] ?: continue
-            return Offset(
-                info.offset.x.toFloat(),
-                (info.offset.y + info.size.height).toFloat(),
-            ) + boundsDelta
-        }
-        return null
+            ?.let { Offset(it.offset.x.toFloat(), it.offset.y.toFloat()) + boundsDelta }
     }
 
     private fun LazyStaggeredGridItemInfo.bounds(): Rect = Rect(
