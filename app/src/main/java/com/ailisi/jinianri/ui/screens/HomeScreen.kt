@@ -151,10 +151,12 @@ fun HomeScreen(
     val gridCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
     val itemCoordinates = remember { mutableMapOf<Long, LayoutCoordinates>() }
 
-    // 事件被删除后清掉它的坐标缓存，避免长期攥着已失效的布局节点
-    LaunchedEffect(cards) {
-        val alive = cards.mapTo(mutableSetOf()) { it.event.id }
-        itemCoordinates.keys.retainAll(alive)
+    // 事件被删除后清掉它的坐标缓存，避免长期攥着已失效的布局节点。
+    // key 用 id 集合而不是整个 cards：回前台刷新「今天」会让 cards 产生新实例，
+    // 用列表做 key 会白白重启这个协程，与玻璃录制层的重组交错时造成闪屏。
+    val aliveIds = remember(cards) { cards.mapTo(mutableSetOf()) { it.event.id } }
+    LaunchedEffect(aliveIds) {
+        itemCoordinates.keys.retainAll(aliveIds)
     }
 
     GlassBackdrop { backdrop ->
@@ -203,7 +205,8 @@ fun HomeScreen(
                                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
                             ) {
                                 Text(
-                                    text = "${cards.size}",
+                                    // 还没读到数据时不要显示 0，否则看起来像数据丢了
+                                    text = if (loaded) "${cards.size}" else "—",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Bold,

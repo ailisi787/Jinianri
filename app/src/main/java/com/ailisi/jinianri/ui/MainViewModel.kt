@@ -80,15 +80,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 事件表是否已经读到过至少一次真实结果。
      *
-     * `stateIn` 的初始值是空列表，首帧分不清「正在读」和「确实没有事件」，
-     * 界面会闪一下「还没有纪念日」。等到第一次真实发射后再允许展示空状态。
+     * `stateIn` 的初始值是空列表，首帧分不清「正在读」和「确实没有事件」。
+     * 必须在 [cards] **发射之后**才置位：直接挂在源流上会比 cards 早一帧，
+     * 那一帧里 loaded=true 而 cards 仍是初始空列表，界面就会闪一下空状态。
      */
     private val _loaded = MutableStateFlow(false)
     val loaded: StateFlow<Boolean> = _loaded
 
     val cards: StateFlow<List<EventCard>> =
         combine(
-            repo.observeEvents().onEach { _loaded.value = true },
+            repo.observeEvents(),
             _today,
         ) { events, today ->
             events.map { event ->
@@ -116,7 +117,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     { it.event.title },
                 )
             )
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        }.onEach { _loaded.value = true }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** 筛选后的卡片：分类过滤 + 搜索 */
     val filteredCards: StateFlow<List<EventCard>> =
