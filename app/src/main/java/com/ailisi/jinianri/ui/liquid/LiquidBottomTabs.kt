@@ -97,9 +97,11 @@ fun LiquidBottomTabs(
 
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
-        var currentIndex by remember(selectedTabIndex) {
-            mutableIntStateOf(selectedTabIndex())
-        }
+        // 不能用 selectedTabIndex 做 remember 的 key：它是 () -> Int 的函数对象，
+        // 父级每次重组都会传进来一个新实例，key 变化会让 remember 重新初始化，
+        // 于是 currentIndex 被重置、液滴归位动画重播 —— 回到前台时看到的就是这一下闪。
+        // 真正的同步交给下面的 LaunchedEffect(selectedTabIndex) 里的 snapshotFlow。
+        var currentIndex by remember { mutableIntStateOf(selectedTabIndex()) }
         val dampedDragAnimation = remember(animationScope) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -132,7 +134,9 @@ fun LiquidBottomTabs(
                 }
             )
         }
-        LaunchedEffect(selectedTabIndex) {
+        // 同样不能用函数对象做 key（每次重组都是新实例，effect 会反复重启）。
+        // 这里只起一次，靠 snapshotFlow 持续观察外部选中的标签。
+        LaunchedEffect(Unit) {
             snapshotFlow { selectedTabIndex() }
                 .collectLatest { index ->
                     currentIndex = index

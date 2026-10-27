@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#6750A4</color>
+    <!-- 与 GlassBackdrop 底板（0xFFF6F7F9）一致：窗口先画的就是这个颜色，
+         回到前台/冷启动时不会先闪一帧纯白 -->
+    <color name="window_background">#F6F7F9</color>
 </resources>
