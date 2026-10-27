@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -163,6 +165,10 @@ fun HomeScreen(
         val dragBackdrop = rememberCombinedBackdrop(backdrop, listBackdrop)
         Scaffold(
             containerColor = Color.Transparent,
+            // 顶部的状态栏避让由内容自己处理（见下方 Column 的 statusBarsPadding），
+            // 这里把 Scaffold 的默认 insets 关掉：它会在回到前台时因系统栏 insets
+            // 重新分发而跳动一次，整屏内容跟着重排，看起来就是闪一下。
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             floatingActionButton = {
                 GlassFab(
                     onClick = onAddEvent,
@@ -173,7 +179,8 @@ fun HomeScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    .statusBarsPadding(),
             ) {
                 Spacer(Modifier.height(14.dp))
 
