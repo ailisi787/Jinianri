@@ -74,7 +74,6 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -150,6 +149,8 @@ fun HomeScreen(
     val gridState = rememberLazyStaggeredGridState()
     val dragController = rememberCardDragController(gridState)
     val listBackdrop = rememberLayerBackdrop()
+    // 网格内边距不在 layoutInfo.offset 里，两套坐标之间差一个固定偏移，
+    // 拖拽时用它换算；只在拾起瞬间取一次（拖动期间 animateItem 已关闭，偏移不再变化）
     val gridCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
     val itemCoordinates = remember { mutableMapOf<Long, LayoutCoordinates>() }
 
@@ -353,14 +354,13 @@ fun HomeScreen(
                                                 val info = gridState.layoutInfo.visibleItemsInfo
                                                     .firstOrNull { it.key == card.event.id }
                                                 if (info != null) {
-                                                    val actual = actualPositionOf(
-                                                        gridCoordinates.value,
-                                                        itemCoordinates[card.event.id],
-                                                    )
                                                     dragController.start(
                                                         id = card.event.id,
                                                         layoutOffset = info.offset,
-                                                        actualPosition = actual,
+                                                        actualPosition = actualPositionOf(
+                                                            gridCoordinates.value,
+                                                            itemCoordinates[card.event.id],
+                                                        ),
                                                         local = local,
                                                         size = info.size,
                                                     )
@@ -937,7 +937,13 @@ fun GlassFab(
     }
 }
 
-/** 卡片在网格坐标系中的实际位置；坐标系未就绪时返回 null，由调用方回退到 layoutInfo */
+/**
+ * 卡片在网格坐标系中的实际位置；坐标系未就绪时返回 null，由调用方回退到 layoutInfo。
+ *
+ * 与 layoutInfo.offset 的差值不是动画残影，而是网格的 contentPadding ——
+ * 后者不包含在 layoutInfo.offset 里。两套坐标必须换算到同一个空间，
+ * 否则悬浮卡会整体偏移一个内边距，碰撞判定和看到的方框自然对不上。
+ */
 private fun actualPositionOf(
     gridCoordinates: LayoutCoordinates?,
     itemCoordinates: LayoutCoordinates?,
@@ -956,7 +962,7 @@ private fun rememberCardDragController(gridState: LazyStaggeredGridState): CardD
 /**
  * 首页卡片拖拽排序控制器：长按拾起 → 跟手移动 → 松手回弹到目标格并持久化顺序。
  *
- * 拖动期间维持一份临时顺序（[orderIds]），网格实时按新顺序排布（配合 animateItem 位移动画），
+ * 拖动期间维持一份临时顺序（[orderIds]），网格实时按新顺序排布（空槽即落点预览），
  * 被拖动的卡片本体隐藏，由 [CardDragOverlay] 渲染一张悬浮玻璃卡片跟手移动。
  */
 @Stable
@@ -1002,6 +1008,11 @@ private class CardDragController(
     private var baseIds: List<Long> = emptyList()
     private var grabOffset = Offset.Zero
     private var pointer = Offset.Zero
+
+    /**
+     * layoutInfo 坐标 → 屏幕/悬浮层坐标的固定偏移（网格 contentPadding）。
+     * 在拾起瞬间取一次：拖动期间 animateItem 已关闭，这个偏移不会再变。
+     */
     private var boundsDelta = Offset.Zero
     private var autoScrollJob: Job? = null
 
@@ -1031,6 +1042,13 @@ private class CardDragController(
         }
     }
 
+    /**
+     * 拾起卡片。
+     *
+     * 悬浮层、手指、命中判定统一用「实际屏幕坐标」：`layoutInfo.offset` 不含网格的
+     * contentPadding，直接拿来画悬浮卡会整体偏一个内边距；同理，拿它和手指坐标做
+     * 碰撞也会偏。这里记下两者的固定差值 [boundsDelta]，三处统一换算。
+     */
     fun start(
         id: Long,
         layoutOffset: IntOffset,
@@ -1046,10 +1064,10 @@ private class CardDragController(
         draggingSize = size
         grabOffset = local
         val layoutTopLeft = Offset(layoutOffset.x.toFloat(), layoutOffset.y.toFloat())
-        val itemTopLeft = actualPosition ?: layoutTopLeft
-        boundsDelta = itemTopLeft - layoutTopLeft
-        pointer = itemTopLeft + local
-        overlayOffset = itemTopLeft
+        val topLeft = actualPosition ?: layoutTopLeft
+        boundsDelta = topLeft - layoutTopLeft
+        pointer = topLeft + local
+        overlayOffset = topLeft
         settling = false
         startAutoScroll()
         scope.launch {
@@ -1058,40 +1076,52 @@ private class CardDragController(
     }
 
     fun onDrag(delta: Offset) {
-        val id = draggingId ?: return
+        if (draggingId == null) return
         if (settling) return
         pointer += delta
         overlayOffset = pointer - grabOffset
+        updateTarget()
+    }
 
+    /**
+     * 碰撞判定 —— 用被拖卡片自己的方块，而不是手指那一个点。
+     *
+     * 1. 以卡片中心作为探针：用户判断"会落到哪"看的是这张卡压住了谁，
+     *    手指只是抓着它的某个位置；用手指点会让判定点和看到的方块错开，
+     *    这就是"方框占位和碰撞感觉不对"的直接原因。
+     * 2. 只认中心真正压在某张卡里的情况，**不做"最近卡片"兜底**：
+     *    被拖卡片自己的空槽始终留在布局中，中心多数时候正落在空槽里，
+     *    兜底会把旁边的卡判成目标，于是来回翻跳（拖不到想去的位置，还压着邻居）。
+     * 3. 压住谁就占据谁的槽位：后移时它前移一格，前移时它后移一格，
+     *    松手后卡片正好落在被压住的那一格，落点可预期。
+     */
+    private fun updateTarget() {
+        val id = draggingId ?: return
         val ids = orderIds ?: return
-        val candidates = gridState.layoutInfo.visibleItemsInfo.filter { info ->
+        val probe = overlayOffset + Offset(
+            draggingSize.width / 2f,
+            draggingSize.height / 2f,
+        )
+        val hit = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
             val key = info.key as? Long
-            key != null && key != id && key in ids
-        }
-        val target = candidates.firstOrNull { pointer in it.bounds().translate(boundsDelta) }
-            ?: candidates.minByOrNull { distanceSquared(pointer, it.bounds().translate(boundsDelta)) }
-        if (target != null) {
-            val targetKey = target.key as? Long
-            val to = targetKey?.let { ids.indexOf(it) } ?: -1
-            val from = ids.indexOf(id)
-            if (to >= 0 && from >= 0 && to != from) {
-                val rect = target.bounds().translate(boundsDelta)
-                val after = when {
-                    pointer.y > rect.center.y + rect.height * 0.15f -> true
-                    pointer.y < rect.center.y - rect.height * 0.15f -> false
-                    else -> pointer.x > rect.center.x
-                }
-                val dest = if (to > from) {
-                    if (after) to else to - 1
-                } else {
-                    if (after) to + 1 else to
-                }
-                val next = ids.toMutableList()
-                next.removeAt(from)
-                next.add(dest.coerceIn(0, next.size), id)
-                orderIds = next
-            }
-        }
+            key != null && key != id && key in ids &&
+                probe in info.bounds().translate(boundsDelta)
+        } ?: return
+        val hitKey = hit.key as? Long ?: return
+        val to = ids.indexOf(hitKey)
+        val from = ids.indexOf(id)
+        if (to < 0 || from < 0 || to == from) return
+        val next = ids.toMutableList()
+        next.removeAt(from)
+        next.add(to.coerceIn(0, next.size), id)
+        // 重排会改变当前「第一个可见项」的下标。LazyStaggeredGrid 发现首项换了位置后，
+        // 会按 key 把滚动位置贴回这张卡 —— 整屏内容于是跟着滚动（拖到列表顶部附近
+        // 尤其明显，卡片会突然跳到别的槽位）。重排前后把首项下标和偏移原样钉住，
+        // requestScrollToItem 同时会丢弃上次记住的首项 key，网格就不会自作主张滚动。
+        val anchorIndex = gridState.firstVisibleItemIndex
+        val anchorOffset = gridState.firstVisibleItemScrollOffset
+        orderIds = next
+        gridState.requestScrollToItem(anchorIndex, anchorOffset)
     }
 
     fun end() = settle(commit = true)
@@ -1114,7 +1144,12 @@ private class CardDragController(
                         (pointer.y - (viewport.height - threshold)) / threshold * maxSpeed
                     else -> 0f
                 }
-                if (dy != 0f) gridState.scrollBy(dy)
+                if (dy != 0f) {
+                    gridState.scrollBy(dy)
+                    // 内容在探针底下滚过去了，重新判一次：手指不动也要跟着换位，
+                    // 否则滚了半天松手，卡片落回原处
+                    updateTarget()
+                }
             }
         }
     }
@@ -1173,12 +1208,6 @@ private class CardDragController(
         right = (offset.x + size.width).toFloat(),
         bottom = (offset.y + size.height).toFloat(),
     )
-
-    private fun distanceSquared(point: Offset, rect: Rect): Float {
-        val dx = point.x - rect.center.x
-        val dy = point.y - rect.center.y
-        return dx * dx + dy * dy
-    }
 }
 
 /** 拖拽中的悬浮玻璃卡片：跟手浮在内容之上，并实时折射下方卡片与背景 */
@@ -1203,11 +1232,6 @@ private fun CardDragOverlay(
             modifier = Modifier
                 .offset { IntOffset(topLeft.x.roundToInt(), topLeft.y.roundToInt()) }
                 .size(dragWidth, dragHeight)
-                .graphicsLayer {
-                    val scale = 1f + 0.05f * lift
-                    scaleX = scale
-                    scaleY = scale
-                }
         ) {
             if (cardMode) {
                 EventGridCard(
